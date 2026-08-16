@@ -1,0 +1,19 @@
+# Never commit data or identifiers
+*.raw
+*.bed
+*.bim
+*.fam
+*.log
+*.nosex
+*.vcf
+*.vcf.gz
+*_clinical_data*.csv
+*IID*
+*phe*.csv
+data/
+raw/
+# R / system artefacts
+.Rhistory
+.RData
+.Rproj.user/
+.DS_Store

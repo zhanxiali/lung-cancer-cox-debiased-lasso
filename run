@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Code Ocean entry point. Executed by "Reproducible Run".
+#
+# Code Ocean mounts this repository at /code, provides read-only inputs at /data,
+# and collects anything written to /results.
+#
+# Default behaviour is the reduced-scale demonstration, which finishes in a few
+# minutes. Set RUN_MODE=full for the settings used for the published analyses.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+RESULTS="${CO_RESULTS:-/results}"
+[ -d "$RESULTS" ] || RESULTS="$REPO/results"
+mkdir -p "$RESULTS"
+
+export SIM_UNIVLIB="$REPO/core/sim_univLib.cpp"
+
+# Prefer real inputs mounted at /data; otherwise use the simulated dataset.
+if [ -f /data/genotypes.raw ] && [ -f /data/clinical.csv ]; then
+  export GENO_RAW=/data/genotypes.raw
+  export CLIN_CSV=/data/clinical.csv
+  echo "Inputs: /data"
+else
+  export GENO_RAW="$REPO/example/example_genotypes.raw"
+  export CLIN_CSV="$REPO/example/example_clinical.csv"
+  echo "Inputs: simulated dataset in example/"
+fi
+
+MODE="${RUN_MODE:-demo}"
+if [ "$MODE" = "full" ]; then
+  N_MULTI=30; N_CV=5
+else
+  N_MULTI=8;  N_CV=3
+fi
+echo "Mode: $MODE (multipliers=$N_MULTI, folds=$N_CV)"
+echo "Results: $RESULTS"
+echo
+
+cd "$REPO/code"
+Rscript demo_pipeline.R n_multi="$N_MULTI" n_cv="$N_CV" out="$RESULTS" 2>&1 \
+  | tee "$RESULTS/run_log.txt"
+
+echo
+echo "Files written:"
+ls -1 "$RESULTS"

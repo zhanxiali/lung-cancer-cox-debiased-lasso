@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Installed on top of the R base image. Versions are pinned to those used for
+# the published analyses; see code/../results/demo_session_info.txt after a run
+# for the versions actually resolved in the capsule.
+set -eu
+
+Rscript -e 'install.packages(c(
+  "quadprog",
+  "Rcpp",
+  "RcppArmadillo",
+  "glmnet",
+  "survival",
+  "dplyr",
+  "ggplot2",
+  "metafor"
+), repos = "https://cloud.r-project.org")'
