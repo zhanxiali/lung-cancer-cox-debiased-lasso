@@ -57,6 +57,14 @@ snp_cols <- colnames(geno)[7:ncol(geno)]
 dat <- merge(geno[, c("IID", snp_cols)], clin, by = "IID")
 message(sprintf("  n = %d, SNPs = %d, events = %d", nrow(dat), length(snp_cols), sum(dat$DEAD)))
 
+# Cox models require strictly positive follow-up times. Drop or floor any
+# non-positive value rather than letting glmnet fail with an opaque message.
+bad <- which(!is.finite(dat$OS_month) | dat$OS_month <= 0)
+if (length(bad)) {
+  message(sprintf("  %d record(s) with non-positive follow-up time; floored at 0.1", length(bad)))
+  dat$OS_month[bad] <- 0.1
+}
+
 for (v in c("SEX", "smoksort", "early_late", "RADS", "chemotx", "surgery"))
   if (v %in% names(dat)) dat[[v]] <- as.factor(dat[[v]])
 dat[snp_cols] <- lapply(dat[snp_cols], function(x) as.numeric(as.character(x)))
@@ -73,11 +81,14 @@ tol <- 1e-6; maxiter <- 50000
 
 message("Penalized Cox fit")
 y <- cbind(time = dat$OS_month, status = dat$DEAD)
-cvfit <- cv.glmnet(X, y, family = "cox", alpha = 1, standardize = FALSE,
-                   nfolds = 5, nlambda = 100)
-beta0 <- as.vector(coef(glmnet(X, y, family = "cox", alpha = 1,
-                               lambda = cvfit$lambda.min, standardize = FALSE,
-                               thresh = tol, maxit = maxiter)))
+# glmnet 5.1 changes the default Cox tie handling from Breslow to Efron.
+# Pin it so the pipeline gives the same answer across glmnet versions.
+glmnet_args <- list(family = "cox", alpha = 1, standardize = FALSE)
+if ("cox.ties" %in% names(formals(glmnet::glmnet))) glmnet_args$cox.ties <- "breslow"
+
+cvfit <- do.call(cv.glmnet, c(list(x = X, y = y, nfolds = 5, nlambda = 100), glmnet_args))
+beta0 <- as.vector(coef(do.call(glmnet, c(list(x = X, y = y, lambda = cvfit$lambda.min,
+                                               thresh = tol, maxit = maxiter), glmnet_args))))
 message(sprintf("  lambda.min = %.5f, nonzero coefficients = %d",
                 cvfit$lambda.min, sum(beta0 != 0)))
 
@@ -119,11 +130,11 @@ for (i in seq_along(multipliers)) {
     Xtr <- X[-idx, ]; Xte <- X[idx, ]
     ttr <- dat$OS_month[-idx]; dtr <- dat$DEAD[-idx]
     tte <- dat$OS_month[idx];  dte <- dat$DEAD[idx]
-    cvk <- cv.glmnet(Xtr, cbind(time = ttr, status = dtr), family = "cox",
-                     alpha = 1, standardize = FALSE, nfolds = 5, nlambda = 100)
-    bk <- as.vector(coef(glmnet(Xtr, cbind(time = ttr, status = dtr), family = "cox",
-                                alpha = 1, lambda = cvk$lambda.min,
-                                standardize = FALSE, thresh = tol, maxit = maxiter)))
+    cvk <- do.call(cv.glmnet, c(list(x = Xtr, y = cbind(time = ttr, status = dtr),
+                                     nfolds = 5, nlambda = 100), glmnet_args))
+    bk <- as.vector(coef(do.call(glmnet, c(list(x = Xtr, y = cbind(time = ttr, status = dtr),
+                                                lambda = cvk$lambda.min, thresh = tol,
+                                                maxit = maxiter), glmnet_args))))
     nl2 <- 0; dl2 <- rep(0, p); ddl2 <- matrix(0, p, p); ss2 <- matrix(0, p, p)
     neg_loglik_functions_cpp_ext(nl2, dl2, ddl2, ss2, Xtr, ttr, dtr, bk)
     r2 <- eigen(ss2); r2$values[r2$values <= 1e-14] <- 0

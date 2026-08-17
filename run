@@ -4,40 +4,68 @@
 # Code Ocean mounts this repository at /code, provides read-only inputs at /data,
 # and collects anything written to /results.
 #
+# The repository layout is located at run time rather than assumed, so the
+# capsule works whether the files sit directly in /code or in a subdirectory.
+#
 # Default behaviour is the reduced-scale demonstration, which finishes in a few
 # minutes. Set RUN_MODE=full for the settings used for the published analyses.
-set -euo pipefail
+set -uo pipefail
 
-REPO="$(cd "$(dirname "$0")" && pwd)"
+SEARCH_ROOT="$(cd "$(dirname "$0")" && pwd)"
 RESULTS="${CO_RESULTS:-/results}"
-[ -d "$RESULTS" ] || RESULTS="$REPO/results"
+[ -d "$RESULTS" ] || RESULTS="$SEARCH_ROOT/results"
 mkdir -p "$RESULTS"
 
-export SIM_UNIVLIB="$REPO/core/sim_univLib.cpp"
+# locate <filename> -> absolute path, or empty if absent
+locate() {
+  find "$SEARCH_ROOT" -type f -name "$1" -not -path '*/.git/*' 2>/dev/null | head -1
+}
 
-# Prefer real inputs mounted at /data; otherwise use the simulated dataset.
-if [ -f /data/genotypes.raw ] && [ -f /data/clinical.csv ]; then
-  export GENO_RAW=/data/genotypes.raw
-  export CLIN_CSV=/data/clinical.csv
-  echo "Inputs: /data"
-else
-  export GENO_RAW="$REPO/example/example_genotypes.raw"
-  export CLIN_CSV="$REPO/example/example_clinical.csv"
-  echo "Inputs: simulated dataset in example/"
+CPP="$(locate sim_univLib.cpp)"
+DRIVER="$(locate demo_pipeline.R)"
+GENO="${GENO_RAW:-}"
+CLIN="${CLIN_CSV:-}"
+[ -f "/data/genotypes.raw" ] && GENO=/data/genotypes.raw
+[ -f "/data/clinical.csv" ]  && CLIN=/data/clinical.csv
+[ -n "$GENO" ] || GENO="$(locate example_genotypes.raw)"
+[ -n "$CLIN" ] || CLIN="$(locate example_clinical.csv)"
+
+missing=0
+for pair in "sim_univLib.cpp:$CPP" "demo_pipeline.R:$DRIVER" \
+            "genotype file:$GENO" "clinical file:$CLIN"; do
+  name="${pair%%:*}"; path="${pair#*:}"
+  if [ -z "$path" ] || [ ! -f "$path" ]; then
+    echo "MISSING: $name"; missing=1
+  else
+    echo "found  : $name -> $path"
+  fi
+done
+
+if [ "$missing" -ne 0 ]; then
+  echo
+  echo "The capsule contents are not laid out as expected. Files present under"
+  echo "$SEARCH_ROOT:"
+  echo
+  find "$SEARCH_ROOT" -type f -not -path '*/.git/*' | sed "s|$SEARCH_ROOT|.|" | sort
+  echo
+  echo "Expected: core/sim_univLib.cpp, code/demo_pipeline.R,"
+  echo "          example/example_genotypes.raw, example/example_clinical.csv"
+  exit 1
 fi
+
+set -e
+export SIM_UNIVLIB="$CPP"
+export GENO_RAW="$GENO"
+export CLIN_CSV="$CLIN"
 
 MODE="${RUN_MODE:-demo}"
-if [ "$MODE" = "full" ]; then
-  N_MULTI=30; N_CV=5
-else
-  N_MULTI=8;  N_CV=3
-fi
+if [ "$MODE" = "full" ]; then N_MULTI=30; N_CV=5; else N_MULTI=8; N_CV=3; fi
+echo
 echo "Mode: $MODE (multipliers=$N_MULTI, folds=$N_CV)"
 echo "Results: $RESULTS"
 echo
 
-cd "$REPO/code"
-Rscript demo_pipeline.R n_multi="$N_MULTI" n_cv="$N_CV" out="$RESULTS" 2>&1 \
+Rscript "$DRIVER" n_multi="$N_MULTI" n_cv="$N_CV" out="$RESULTS" 2>&1 \
   | tee "$RESULTS/run_log.txt"
 
 echo
